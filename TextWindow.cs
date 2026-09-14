@@ -22,13 +22,11 @@ sealed partial class TextWindow : Form
 
     readonly TextBox Editor = new()
     {
-        Dock = DockStyle.Fill,
         Multiline = true,
         BorderStyle = BorderStyle.None,
         WordWrap = true,
         AcceptsTab = true,
         ScrollBars = ScrollBars.None,
-        Margin = Padding.Empty,
     };
     readonly Panel ResizeBox = new() { BackColor = Palette.ResizeBox, Size = new(ResizeBoxSize, ResizeBoxSize) };
     readonly Settings Settings;
@@ -41,10 +39,12 @@ sealed partial class TextWindow : Form
     Point LastCursorPosition;
     #endregion
 
-    const int EM_SETMARGINS = 0xD3;
-    const int EM_SETRECT = 0xB3;
-    const int EC_LEFTMARGIN = 0x1;
-    const int EC_RIGHTMARGIN = 0x2;
+    /// <summary>Letters and digits whose blank space before the ink decides how far the text box is shifted.</summary>
+    const string InkSample = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    Font? MeasuredFont;
+    Point InkOffset;
+
+    const int EM_GETRECT = 0xB2;
 
     [StructLayout(LayoutKind.Sequential)]
     struct Rect { public int Left, Top, Right, Bottom; }
@@ -151,6 +151,7 @@ sealed partial class TextWindow : Form
         if (Settings.FontBold) style |= FontStyle.Bold;
         if (Settings.FontItalic) style |= FontStyle.Italic;
         Editor.Font = new(Settings.FontFamily, Settings.FontSize, style);
+        LayoutEditor();
     }
 
     NotifyIcon CreateTrayIcon()
@@ -450,35 +451,83 @@ sealed partial class TextWindow : Form
     #endregion
 
     /// <summary>
-    /// Keeps Windows 11 from rounding the window's corners, which left dark wedges in them, and removes the text box's
-    /// built-in inset on every side, which .NET properties cannot reach: EM_SETMARGINS clears the left/right inset,
-    /// EM_SETRECT clears the top/bottom one.
+    /// Keeps Windows 11 from rounding the window's corners, which left dark wedges in them.
     /// </summary>
     protected override void OnHandleCreated(EventArgs eventArgs)
     {
         base.OnHandleCreated(eventArgs);
         int cornerPreference = DWMWCP_DONOTROUND;
         DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPreference, sizeof(int));
-        RemoveEditorInset();
-    }
-
-    void RemoveEditorInset()
-    {
-        if (!Editor.IsHandleCreated) return;
-        SendMessage(Editor.Handle, EM_SETMARGINS, (IntPtr)(EC_LEFTMARGIN | EC_RIGHTMARGIN), IntPtr.Zero);
-        Rect rect = new() { Left = 0, Top = 0, Right = Editor.ClientSize.Width, Bottom = Editor.ClientSize.Height };
-        SendMessageRect(Editor.Handle, EM_SETRECT, IntPtr.Zero, ref rect);
     }
 
     /// <summary>
-    /// Keeps the resize box in the bottom right corner and the text box's format rectangle full-sized whenever the
-    /// window size changes.
+    /// Lays out the text box once its handle exists, before the window is shown.
+    /// </summary>
+    protected override void OnLoad(EventArgs eventArgs)
+    {
+        base.OnLoad(eventArgs);
+        LayoutEditor();
+    }
+
+    /// <summary>
+    /// Places the text box so that its letters start at the window's top left corner: the box is moved up and left by
+    /// its own text inset plus the blank space the font draws before its letters, and enlarged by the same amount so
+    /// it still reaches the right and bottom edges.
+    /// </summary>
+    void LayoutEditor()
+    {
+        if (!Editor.IsHandleCreated) return;
+        if (!ReferenceEquals(MeasuredFont, Editor.Font))
+        {
+            InkOffset = MeasureInkOffset(Editor.Font);
+            MeasuredFont = Editor.Font;
+        }
+        Rect formatRect = default;
+        SendMessageRect(Editor.Handle, EM_GETRECT, IntPtr.Zero, ref formatRect);
+        int shiftX = formatRect.Left + InkOffset.X;
+        int shiftY = formatRect.Top + InkOffset.Y;
+        Editor.Bounds = new(-shiftX, -shiftY, ClientSize.Width + shiftX, ClientSize.Height + shiftY);
+    }
+
+    /// <summary>
+    /// Measures the blank pixels the font draws before the leftmost and above the topmost ink of <see cref="InkSample"/>.
+    /// </summary>
+    static Point MeasureInkOffset(Font font) =>
+        new(FirstInkIndex(font, string.Join('\n', InkSample.ToCharArray()), scanColumns: true),
+            FirstInkIndex(font, InkSample, scanColumns: false));
+
+    /// <summary>
+    /// Draws <paramref name="text"/> black on white and returns the first column (or row) that contains ink.
+    /// </summary>
+    static int FirstInkIndex(Font font, string text, bool scanColumns)
+    {
+        const TextFormatFlags flags = TextFormatFlags.NoPadding | TextFormatFlags.NoPrefix;
+        Size size = TextRenderer.MeasureText(text, font, Size.Empty, flags);
+        using Bitmap bitmap = new(Math.Max(1, size.Width), Math.Max(1, size.Height), System.Drawing.Imaging.PixelFormat.Format32bppRgb);
+        using (Graphics graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.Clear(Color.White);
+            TextRenderer.DrawText(graphics, text, font, Point.Empty, Color.Black, Color.White, flags);
+        }
+        int outer = scanColumns ? bitmap.Width : bitmap.Height;
+        int inner = scanColumns ? bitmap.Height : bitmap.Width;
+        for (int i = 0; i < outer; i++)
+            for (int j = 0; j < inner; j++)
+            {
+                Color pixel = scanColumns ? bitmap.GetPixel(i, j) : bitmap.GetPixel(j, i);
+                if (pixel.R < 250 || pixel.G < 250 || pixel.B < 250) return i;
+            }
+        return 0;
+    }
+
+    /// <summary>
+    /// Keeps the resize box in the bottom right corner and the text box filling the window whenever its size changes.
     /// </summary>
     protected override void OnResize(EventArgs eventArgs)
     {
         base.OnResize(eventArgs);
         ResizeBox.Location = new(ClientSize.Width - ResizeBoxSize, ClientSize.Height - ResizeBoxSize);
-        RemoveEditorInset();
+        LayoutEditor();
     }
 
     /// <summary>
