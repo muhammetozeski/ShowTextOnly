@@ -44,7 +44,11 @@ sealed partial class TextWindow : Form
     Font? MeasuredFont;
     Point InkOffset;
 
+    /// <summary>Wheel movement smaller than one notch, kept until it adds up to a whole notch (touchpads send small steps).</summary>
+    int WheelDeltaRemainder;
+
     const int EM_GETRECT = 0xB2;
+    const int EM_LINESCROLL = 0xB6;
 
     [StructLayout(LayoutKind.Sequential)]
     struct Rect { public int Left, Top, Right, Bottom; }
@@ -375,6 +379,10 @@ sealed partial class TextWindow : Form
         }
     }
 
+    /// <summary>
+    /// Alt: changes the opacity. Ctrl: changes the font size. Otherwise scrolls the text. The text box's own wheel
+    /// handling is skipped, since it has no scroll bar to scroll with.
+    /// </summary>
     void HandleMouseWheel(object? sender, MouseEventArgs mouse)
     {
         if (ModifierKeys.HasFlag(Keys.Alt))
@@ -386,6 +394,26 @@ sealed partial class TextWindow : Form
             Settings.FontSize = Math.Clamp(Settings.FontSize + Math.Sign(mouse.Delta), MinimumFontSize, MaximumFontSize);
             ApplyFont();
         }
+        else
+        {
+            ScrollByWheel(mouse.Delta);
+        }
+        if (mouse is HandledMouseEventArgs handledMouse) handledMouse.Handled = true;
+    }
+
+    /// <summary>
+    /// Scrolls the text by the user's "lines per notch" setting for every whole wheel notch, a page per notch when that
+    /// setting is "one screen at a time".
+    /// </summary>
+    void ScrollByWheel(int delta)
+    {
+        WheelDeltaRemainder += delta;
+        int notches = WheelDeltaRemainder / SystemInformation.MouseWheelScrollDelta;
+        if (notches == 0) return;
+        WheelDeltaRemainder -= notches * SystemInformation.MouseWheelScrollDelta;
+        int linesPerNotch = SystemInformation.MouseWheelScrollLines;
+        if (linesPerNotch < 0) linesPerNotch = Math.Max(1, ClientSize.Height / Editor.Font.Height);
+        SendMessage(Editor.Handle, EM_LINESCROLL, IntPtr.Zero, -notches * linesPerNotch);
     }
 
     void HandleDragEnter(object? sender, DragEventArgs drag) =>
