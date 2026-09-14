@@ -49,7 +49,7 @@ sealed partial class TextWindow : Form
     [StructLayout(LayoutKind.Sequential)]
     struct Rect { public int Left, Top, Right, Bottom; }
 
-    [LibraryImport("user32.dll")]
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     private static partial IntPtr SendMessage(IntPtr handle, int message, IntPtr wParam, IntPtr lParam);
 
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]

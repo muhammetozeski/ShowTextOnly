@@ -1,6 +1,14 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace ShowTextOnly;
+
+/// <summary>
+/// Generates AOT-compatible (reflection-free) serialization code for <see cref="Settings"/>, which Native AOT
+/// builds require since they disable System.Text.Json's default reflection-based serialization.
+/// </summary>
+[JsonSerializable(typeof(Settings))]
+partial class SettingsJsonContext : JsonSerializerContext;
 
 /// <summary>
 /// The user's preferences, kept in ShowTextOnly.settings.json next to the executable.
@@ -33,7 +41,7 @@ sealed class Settings
         try
         {
             if (File.Exists(FilePath))
-                return JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new Settings();
+                return JsonSerializer.Deserialize(File.ReadAllText(FilePath), SettingsJsonContext.Default.Settings) ?? new Settings();
         }
         catch (Exception exception)
         {
@@ -49,7 +57,7 @@ sealed class Settings
     {
         try
         {
-            File.WriteAllText(FilePath, JsonSerializer.Serialize(this));
+            File.WriteAllText(FilePath, JsonSerializer.Serialize(this, SettingsJsonContext.Default.Settings));
         }
         catch (Exception exception)
         {
