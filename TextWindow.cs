@@ -55,6 +55,12 @@ sealed partial class TextWindow : Form
     [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
     private static partial IntPtr SendMessageRect(IntPtr handle, int message, IntPtr wParam, ref Rect lParam);
 
+    const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+    const int DWMWCP_DONOTROUND = 1;
+
+    [LibraryImport("dwmapi.dll")]
+    private static partial int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
     /// <summary>
     /// Creates the window, loading the text of <paramref name="filePath"/> when it is given and exists, otherwise
     /// the note file kept next to the executable.
@@ -444,12 +450,15 @@ sealed partial class TextWindow : Form
     #endregion
 
     /// <summary>
-    /// Removes the text box's built-in inset on every side, which .NET properties cannot reach: EM_SETMARGINS
-    /// clears the left/right inset, EM_SETRECT clears the top/bottom one.
+    /// Keeps Windows 11 from rounding the window's corners, which left dark wedges in them, and removes the text box's
+    /// built-in inset on every side, which .NET properties cannot reach: EM_SETMARGINS clears the left/right inset,
+    /// EM_SETRECT clears the top/bottom one.
     /// </summary>
     protected override void OnHandleCreated(EventArgs eventArgs)
     {
         base.OnHandleCreated(eventArgs);
+        int cornerPreference = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(Handle, DWMWA_WINDOW_CORNER_PREFERENCE, ref cornerPreference, sizeof(int));
         RemoveEditorInset();
     }
 
