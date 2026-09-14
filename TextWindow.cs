@@ -42,11 +42,18 @@ sealed partial class TextWindow : Form
     #endregion
 
     const int EM_SETMARGINS = 0xD3;
+    const int EM_SETRECT = 0xB3;
     const int EC_LEFTMARGIN = 0x1;
     const int EC_RIGHTMARGIN = 0x2;
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct Rect { public int Left, Top, Right, Bottom; }
+
     [LibraryImport("user32.dll")]
     private static partial IntPtr SendMessage(IntPtr handle, int message, IntPtr wParam, IntPtr lParam);
+
+    [LibraryImport("user32.dll", EntryPoint = "SendMessageW")]
+    private static partial IntPtr SendMessageRect(IntPtr handle, int message, IntPtr wParam, ref Rect lParam);
 
     /// <summary>
     /// Creates the window, loading the text of <paramref name="filePath"/> when it is given and exists, otherwise
@@ -329,11 +336,6 @@ sealed partial class TextWindow : Form
             OpenFile();
             key.SuppressKeyPress = true;
         }
-        else if (key.Control && key.KeyCode == Keys.T)
-        {
-            ToggleTopMost();
-            key.SuppressKeyPress = true;
-        }
         else if (key.Control && key.Shift && key.KeyCode == Keys.K)
         {
             DeleteCurrentLine();
@@ -342,6 +344,11 @@ sealed partial class TextWindow : Form
         else if (key.Control && key.Shift && key.KeyCode == Keys.T)
         {
             InsertTimestamp();
+            key.SuppressKeyPress = true;
+        }
+        else if (key.Control && key.KeyCode == Keys.T)
+        {
+            ToggleTopMost();
             key.SuppressKeyPress = true;
         }
         else if (key.Control && key.KeyCode == Keys.D)
@@ -382,8 +389,8 @@ sealed partial class TextWindow : Form
         if (drag.Data?.GetData(DataFormats.FileDrop) is not string[] { Length: > 0 } paths) return;
         try
         {
-            Editor.Text = File.ReadAllText(paths[0]);
-            FilePath = paths[0];
+            Editor.Text = string.Join(Environment.NewLine, paths.Where(File.Exists).Select(File.ReadAllText));
+            FilePath = paths is [var singlePath] ? singlePath : null;
         }
         catch (Exception exception)
         {
@@ -437,21 +444,32 @@ sealed partial class TextWindow : Form
     #endregion
 
     /// <summary>
-    /// Removes the text box's built-in left/right inset, which .NET properties cannot reach.
+    /// Removes the text box's built-in inset on every side, which .NET properties cannot reach: EM_SETMARGINS
+    /// clears the left/right inset, EM_SETRECT clears the top/bottom one.
     /// </summary>
     protected override void OnHandleCreated(EventArgs eventArgs)
     {
         base.OnHandleCreated(eventArgs);
+        RemoveEditorInset();
+    }
+
+    void RemoveEditorInset()
+    {
+        if (!Editor.IsHandleCreated) return;
         SendMessage(Editor.Handle, EM_SETMARGINS, (IntPtr)(EC_LEFTMARGIN | EC_RIGHTMARGIN), IntPtr.Zero);
+        Rect rect = new() { Left = 0, Top = 0, Right = Editor.ClientSize.Width, Bottom = Editor.ClientSize.Height };
+        SendMessageRect(Editor.Handle, EM_SETRECT, IntPtr.Zero, ref rect);
     }
 
     /// <summary>
-    /// Keeps the resize box in the bottom right corner whenever the window size changes.
+    /// Keeps the resize box in the bottom right corner and the text box's format rectangle full-sized whenever the
+    /// window size changes.
     /// </summary>
     protected override void OnResize(EventArgs eventArgs)
     {
         base.OnResize(eventArgs);
         ResizeBox.Location = new(ClientSize.Width - ResizeBoxSize, ClientSize.Height - ResizeBoxSize);
+        RemoveEditorInset();
     }
 
     /// <summary>
